@@ -1,0 +1,20 @@
+Source: prun-elliptics
+Section: database
+Priority: optional
+Maintainer: Andrey Budnik <budnik27@gmail.com>
+Build-Depends:	cdbs,
+		cmake (>= 2.6),
+		debhelper (>= 7.0.50~),
+		libboost-dev,
+		elliptics-client,
+		elliptics-dev
+Standards-Version: 3.8.0
+Homepage: https://github.com/abudnik/prun-elliptics
+Vcs-Git: git://github.com/abudnik/prun-elliptics.git
+Vcs-Browser: https://github.com/abudnik/prun-elliptics
+
+Package: prun-elliptics
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Prun job serialization library
+ prun-elliptics is a prun job serialization library
