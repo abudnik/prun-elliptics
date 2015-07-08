@@ -26,6 +26,6 @@ private:
     boost::property_tree::ptree config_;
     std::unique_ptr< file_logger > log_;
     std::unique_ptr< node > node_;
-	std::shared_ptr< session > sess_;
+    std::shared_ptr< session > sess_;
     const std::string namespace_;
 };
