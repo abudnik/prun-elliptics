@@ -51,6 +51,7 @@ void DbElliptics::Initialize( const std::string &configPath )
 
 void DbElliptics::Shutdown()
 {
+    replies_.clear();
     config_.clear();
     sess_.reset();
 }
@@ -88,20 +89,59 @@ void DbElliptics::GetAll( GetCallback callback )
         if ( routes.empty() )
             throw std::logic_error( "DbElliptics::GetAll: empty routes table" );
 
-        auto it = routes.begin();
-        dnet_id id;
-        memset( &id, 0, sizeof( id ) );
-        dnet_setup_id( &id, it->group_id, it->id.id );
-
-        auto res = sess->start_iterator( ioremap::elliptics::key( id ),
-                                          {}, DNET_ITYPE_NETWORK, 0 );
-
-        for( auto it = res.begin(), end = res.end(); it != end; ++it )
+        for( const dnet_route_entry &route_entry : routes )
         {
-            if ( it->reply()->status != 0 )
-                continue;
+            dnet_id id;
+            memset( &id, 0, sizeof( id ) );
+            dnet_setup_id( &id, route_entry.group_id, route_entry.id.id );
 
-            auto read_result = sess->read_data( it->reply()->key, 0, it->reply()->size );
+            IterateNode( sess, id );
+        }
+
+        IterateQuorumReplies( sess, routes.size(), callback );
+
+        replies_.clear();
+    }
+}
+
+void DbElliptics::IterateNode( const SessionPtr &sess, const dnet_id &id )
+{
+    auto res = sess->start_iterator( ioremap::elliptics::key( id ),
+                                     {}, DNET_ITYPE_NETWORK, 0 );
+
+    for( auto it = res.begin(), end = res.end(); it != end; ++it )
+    {
+        if ( it->reply()->status != 0 )
+            continue;
+
+        auto response = it->reply();
+        DbKey key{ response->key, response->timestamp };
+        auto it_r = replies_.find( key );
+        if ( it_r != replies_.end() )
+        {
+            DbEntry &entry = it_r->second;
+            entry.groups.push_back( id.group_id );
+        }
+        else
+        {
+            std::vector<int> groups{ static_cast<int>( id.group_id ) };
+            DbEntry entry{ groups, response->size };
+            replies_.insert( std::make_pair( key, entry ) );
+        }
+    }
+}
+
+void DbElliptics::IterateQuorumReplies( const SessionPtr &sess, size_t numRoutes, GetCallback callback )
+{
+    const size_t quorum = numRoutes / 2 + 1;
+
+    for( auto it = replies_.begin(); it != replies_.end(); ++it )
+    {
+        const DbEntry &entry = it->second;
+        const std::vector<int> &groups = entry.groups;
+        if ( groups.size() >= quorum )
+        {
+            auto read_result = sess->read_data( it->first.id, groups, 0, entry.size );
             auto entries = read_result.get();
             const auto &entry = entries.front();
 
@@ -110,7 +150,7 @@ void DbElliptics::GetAll( GetCallback callback )
             if ( kv.compare( 0, namespace_.size(), namespace_, 0, namespace_.size() ) != 0 )
                 continue;
 
-            size_t keyStart = 5;
+            size_t keyStart = namespace_.size() + 1;
             size_t keyEnd = kv.find( ' ', keyStart );
             if ( keyEnd == std::string::npos )
                 continue;
