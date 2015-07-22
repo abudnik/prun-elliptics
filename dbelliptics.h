@@ -8,7 +8,6 @@ using namespace ioremap::elliptics;
 struct DbKey
 {
     dnet_raw_id id;
-    dnet_time timestamp;
 };
 
 struct DbEntry
@@ -21,17 +20,14 @@ struct IteratorResponseCompare
 {
    bool operator() ( const DbKey &lhs, const DbKey &rhs ) const
    {
-       if ( dnet_time_cmp( &lhs.timestamp, &rhs.timestamp ) < 0 )
-           return true;
-       if ( memcmp( &lhs.id, &rhs.id, sizeof( lhs.id ) ) < 0 )
-           return true;
-       return false;
+       return memcmp( &lhs.id, &rhs.id, sizeof( lhs.id ) ) < 0;
    }
 };
 
 class DbElliptics : public common::IHistory
 {
     typedef std::shared_ptr< session > SessionPtr;
+    typedef std::map< DbKey, DbEntry, IteratorResponseCompare > DbKeyToEntry;
 
 public:
     DbElliptics();
@@ -45,8 +41,8 @@ public:
     virtual void GetAll( GetCallback callback );
 
 private:
-    void IterateNode( const SessionPtr &sess, const dnet_id &id );
-    void IterateQuorumReplies( const SessionPtr &sess, size_t numRoutes, GetCallback callback );
+    void IterateNode( const SessionPtr &sess, const dnet_id &id, DbKeyToEntry &replies );
+    void IterateQuorumReplies( const SessionPtr &sess, size_t numRoutes, const DbKeyToEntry &replies, GetCallback callback );
     void ParseConfig( const std::string &configPath );
     dnet_log_level ParseLogLevel( const std::string &level ) const;
 
@@ -56,6 +52,4 @@ private:
     std::unique_ptr< node > node_;
     SessionPtr sess_;
     const std::string namespace_;
-
-    std::map< DbKey, DbEntry, IteratorResponseCompare > replies_;
 };

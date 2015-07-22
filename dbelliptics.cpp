@@ -4,6 +4,23 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/lexical_cast.hpp>
 
+
+struct DbAddr
+{
+    dnet_route_entry entry;
+};
+
+struct DbAddrCompare
+{
+   bool operator() ( const DbAddr &lhs, const DbAddr &rhs ) const
+   {
+       if ( lhs.entry.group_id < rhs.entry.group_id )
+           return true;
+       return dnet_addr_cmp( &lhs.entry.addr, &rhs.entry.addr ) < 0;
+   }
+};
+
+
 DbElliptics::DbElliptics()
 : namespace_( "prun" )
 {}
@@ -22,6 +39,10 @@ void DbElliptics::Initialize( const std::string &configPath )
         remotes.push_back( v.second.get_value< std::string >() );
     }
 
+    if ( remotes.size() % 2 == 0 )
+        throw std::logic_error( "DbElliptics::Initialize: number of remote nodes (" + std::to_string( remotes.size() ) +
+                                " given) must be an odd number to achieve quorum" );
+
     std::vector< int > groups;
     for( const auto &v : config_.get_child( "groups" ) )
     {
@@ -29,6 +50,7 @@ void DbElliptics::Initialize( const std::string &configPath )
     }
 
     // init elliptics node
+    size_t numConnectedNodes = 0;
     log_.reset( new file_logger( logPath.c_str(), logLevel ) );
     node_.reset( new node( logger( *log_, blackhole::log::attributes_t() ) ) );
     for( const std::string &remote : remotes )
@@ -36,12 +58,15 @@ void DbElliptics::Initialize( const std::string &configPath )
         try
         {
             node_->add_remote( remote );
+            ++numConnectedNodes;
         }
-        catch( const std::exception &ex )
-        {
-            throw std::logic_error( "DbElliptics::Initialize: couldn't connect to remote node: " + remote );
-        }
+        catch( const std::exception &ex ) {}
     }
+
+    if ( numConnectedNodes <= remotes.size() / 2 )
+        throw std::logic_error( "DbElliptics::Initialize: couldn't connect to quorum of nodes: " +
+                                std::to_string( numConnectedNodes ) + " connected / " +
+                                std::to_string( remotes.size() ) + " total" );
 
     // create elliptics session
     sess_ = std::make_shared< session >( *node_ );
@@ -51,7 +76,6 @@ void DbElliptics::Initialize( const std::string &configPath )
 
 void DbElliptics::Shutdown()
 {
-    replies_.clear();
     config_.clear();
     sess_.reset();
 }
@@ -89,22 +113,27 @@ void DbElliptics::GetAll( GetCallback callback )
         if ( routes.empty() )
             throw std::logic_error( "DbElliptics::GetAll: empty routes table" );
 
-        for( const dnet_route_entry &route_entry : routes )
+        std::set< DbAddr, DbAddrCompare > nodesAddr;
+        for( auto it = routes.begin(); it != routes.end(); ++it )
+        {
+            nodesAddr.insert( DbAddr{ *it } );
+        }
+
+        DbKeyToEntry replies;
+        for( const DbAddr &addr : nodesAddr )
         {
             dnet_id id;
             memset( &id, 0, sizeof( id ) );
-            dnet_setup_id( &id, route_entry.group_id, route_entry.id.id );
+            dnet_setup_id( &id, addr.entry.group_id, addr.entry.id.id );
 
-            IterateNode( sess, id );
+            IterateNode( sess, id, replies );
         }
 
-        IterateQuorumReplies( sess, routes.size(), callback );
-
-        replies_.clear();
+        IterateQuorumReplies( sess, nodesAddr.size(), replies, callback );
     }
 }
 
-void DbElliptics::IterateNode( const SessionPtr &sess, const dnet_id &id )
+void DbElliptics::IterateNode( const SessionPtr &sess, const dnet_id &id, DbKeyToEntry &replies )
 {
     auto res = sess->start_iterator( ioremap::elliptics::key( id ),
                                      {}, DNET_ITYPE_NETWORK, 0 );
@@ -115,9 +144,9 @@ void DbElliptics::IterateNode( const SessionPtr &sess, const dnet_id &id )
             continue;
 
         auto response = it->reply();
-        DbKey key{ response->key, response->timestamp };
-        auto it_r = replies_.find( key );
-        if ( it_r != replies_.end() )
+        DbKey key{ response->key };
+        auto it_r = replies.find( key );
+        if ( it_r != replies.end() )
         {
             DbEntry &entry = it_r->second;
             entry.groups.push_back( id.group_id );
@@ -126,16 +155,16 @@ void DbElliptics::IterateNode( const SessionPtr &sess, const dnet_id &id )
         {
             std::vector<int> groups{ static_cast<int>( id.group_id ) };
             DbEntry entry{ groups, response->size };
-            replies_.insert( std::make_pair( key, entry ) );
+            replies.insert( std::make_pair( key, entry ) );
         }
     }
 }
 
-void DbElliptics::IterateQuorumReplies( const SessionPtr &sess, size_t numRoutes, GetCallback callback )
+void DbElliptics::IterateQuorumReplies( const SessionPtr &sess, size_t numRoutes, const DbKeyToEntry &replies, GetCallback callback )
 {
     const size_t quorum = numRoutes / 2 + 1;
 
-    for( auto it = replies_.begin(); it != replies_.end(); ++it )
+    for( auto it = replies.begin(); it != replies.end(); ++it )
     {
         const DbEntry &entry = it->second;
         const std::vector<int> &groups = entry.groups;
