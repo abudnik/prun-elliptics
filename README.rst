@@ -41,9 +41,9 @@ Example of prun-elliptics config file: prun/conf/history-elliptics.cfg
 
 Config is represented in the JSON formatted file with following properties:
 
-``log`` - path to a log file.
-``log_level`` - must be one of the following: error, warning, info, notice, debug.
-``remotes`` - array of elliptics remote server nodes.
-``groups`` - array of group ids (i.e. replica ids).
+| ``log`` - path to a log file.
+| ``log_level`` - must be one of the following: error, warning, info, notice, debug.
+| ``remotes`` - array of elliptics remote server nodes.
+| ``groups`` - array of group ids (i.e. replica ids).
 
 For more detailed information see http://doc.reverbrain.com/elliptics:configuration
